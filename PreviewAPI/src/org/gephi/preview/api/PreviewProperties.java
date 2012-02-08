@@ -50,6 +50,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 
 /**
  * Container for {@link PreviewProperty} attached to a {@link PreviewModel}.
@@ -129,6 +130,14 @@ public class PreviewProperties {
         } else {
             simpleValues.put(name, value);
         }
+    }
+    
+    /**
+     * Removes a simple value if existing
+     * @param name Simple value name
+     */
+    public void removeSimpleValue(String name){
+        simpleValues.remove(name);
     }
 
     /**
@@ -255,6 +264,14 @@ public class PreviewProperties {
         }
         return defaultValue;
     }
+    
+    /**
+     * Return all simple values.
+     * @return all simple values
+     */
+    public Set<Entry<String, Object>> getSimpleValues(){
+        return simpleValues.entrySet();
+    }    
 
     /**
      * Returns all properties.

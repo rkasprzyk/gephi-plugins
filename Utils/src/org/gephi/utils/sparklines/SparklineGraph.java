@@ -48,6 +48,7 @@ import java.awt.Paint;
 import java.awt.RenderingHints;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
+import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 
@@ -109,6 +110,7 @@ public class SparklineGraph {
         final BufferedImage image = new BufferedImage(parameters.getWidth(), parameters.getHeight(), BufferedImage.TYPE_INT_ARGB);
         final Color backgroundColor = parameters.getBackgroundColor() != null ? parameters.getBackgroundColor() : SparklineParameters.DEFAULT_BACKGROUND_COLOR;
         final Color lineColor = parameters.getLineColor() != null ? parameters.getLineColor() : SparklineParameters.DEFAULT_LINE_COLOR;
+        final Color areaColor = parameters.getAreaColor() != null ? parameters.getAreaColor() : SparklineParameters.DEFAULT_AREA_COLOR;
         Color higlightMinColor = parameters.getHiglightMinColor();
         Color higlightMaxColor = parameters.getHiglightMaxColor();
         int width = parameters.getWidth();
@@ -138,7 +140,7 @@ public class SparklineGraph {
         final Graphics2D g = image.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         //Background:
-        if (backgroundColor != null) {
+        if (backgroundColor != null && !parameters.isTransparentBackground()) {
             g.setBackground(backgroundColor);
             g.clearRect(0, 0, width, height);
         }
@@ -150,10 +152,14 @@ public class SparklineGraph {
             g.draw(new Line2D.Double(0, height / 2f, width - 1, height / 2f));
         } else {
             if (higlightMaxColor != null || higlightMinColor != null || highlightValueColor != null) {
-                height -= HIGHLIGHT_RADIUS;//Highlight circle radius pixels less for not drawing outside bounds
-                width -= HIGHLIGHT_RADIUS;//Highlight circle radius pixels less for not drawing outside bounds
+                height -= HIGHLIGHT_RADIUS;//Highlight circle radius pixels less in order not to draw outside bounds
+                width -= HIGHLIGHT_RADIUS;//Highlight circle radius pixels less in order not to draw outside bounds
                 g.translate(HIGHLIGHT_RADIUS / 2, HIGHLIGHT_RADIUS / 2);
             }
+
+            //Poly
+            Path2D.Float path = new Path2D.Float();
+            path.moveTo(0, height);
 
             //Calculate x tick width and x min value:
             float xMin;
@@ -183,6 +189,14 @@ public class SparklineGraph {
                 y1 = bottom - (yValues[i + 1].floatValue() - yMin) * yTickWidth;
                 g.draw(new Line2D.Double(x0, y0, x1, y1));
 
+                //Add to path
+                if (parameters.isDrawArea()) {
+                    if (i == 0) {
+                        path.lineTo(x0, y0);
+                    }
+                    path.lineTo(x1, y1);
+                }
+
                 //Save min/max values highlihgting if enabled:
                 if (yValues[i + 1].floatValue() == yMin && higlightMinColor != null) {
                     highlightsList.add(new HighlightParameters(x1, y1, higlightMinColor));
@@ -210,19 +224,31 @@ public class SparklineGraph {
                     if ((higlightedValueXPosition - x0) < (x1 - x0) / 2f) {//Higlight left point
                         highlightsList.add(new HighlightParameters(x0, y0, highlightValueColor));
                         if (parameters.getHighlightTextColor() != null) {
-                            highlightedValueText = "(" + (xValues != null ? xValues[i] : i) + "," + yValues[i] + ")";
+                            highlightedValueText = buildHighlightText(parameters.getHighlightTextMode(), xValues != null ? xValues[i] : i, yValues[i]);
                         }
                     } else {//Higlight right point
                         highlightsList.add(new HighlightParameters(x1, y1, highlightValueColor));
                         if (parameters.getHighlightTextColor() != null) {
-                            highlightedValueText = "(" + (xValues != null ? xValues[i + 1] : i + 1) + "," + yValues[i + 1] + ")";
+                            highlightedValueText = buildHighlightText(parameters.getHighlightTextMode(), xValues != null ? xValues[i + 1] : i + 1, yValues[i + 1]);
                         }
                     }
                     higlightedValueXPosition = null;
                 }
             }
 
-            //Draw list of highlights at the end to always draw them on top of lines:
+
+            //Draw area
+            if (parameters.isDrawArea()) {
+                //End Path
+                path.lineTo(width, height);
+                path.lineTo(0, height);
+
+                g.setColor(areaColor);
+                g.fill(path);
+            }
+
+
+            //Draw list of highlights at the end in order to always draw them on top of lines:
             for (HighlightParameters p : highlightsList) {
                 drawHighlight(g, p.x, p.y, p.color);
             }
@@ -269,6 +295,29 @@ public class SparklineGraph {
         }
 
         return max;
+    }
+
+    private static String buildHighlightText(SparklineParameters.HighlightTextMode highlightTextMode, Number x, Number y) {
+        StringBuilder sb = new StringBuilder();
+        if (highlightTextMode == null) {
+            highlightTextMode = SparklineParameters.DEFAULT_HIGHLIGHT_TEXT_MODE;
+        }
+        sb.append('(');
+        switch (highlightTextMode) {
+            case X_VALUES:
+                sb.append(x);
+                break;
+            case Y_VALUES:
+                sb.append(y);
+                break;
+            default:
+                sb.append(x);
+                sb.append(',');
+                sb.append(y);
+                break;
+        }
+        sb.append(')');
+        return sb.toString();
     }
 
     private static class HighlightParameters {

@@ -42,14 +42,17 @@ Portions Copyrighted 2011 Gephi Consortium.
 package org.gephi.preview;
 
 import java.awt.Dimension;
+import java.awt.Font;
 import java.awt.Point;
 import java.beans.PropertyEditor;
 import java.beans.PropertyEditorManager;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.XMLStreamWriter;
@@ -59,7 +62,14 @@ import org.gephi.preview.api.PreviewProperties;
 import org.gephi.preview.api.PreviewProperty;
 import org.gephi.preview.presets.DefaultPreset;
 import org.gephi.preview.spi.Renderer;
+import org.gephi.preview.types.DependantColor;
+import org.gephi.preview.types.DependantOriginalColor;
+import org.gephi.preview.types.EdgeColor;
+import org.gephi.preview.types.propertyeditors.BasicDependantColorPropertyEditor;
+import org.gephi.preview.types.propertyeditors.BasicDependantOriginalColorPropertyEditor;
+import org.gephi.preview.types.propertyeditors.BasicEdgeColorPropertyEditor;
 import org.gephi.project.api.Workspace;
+import org.openide.util.Exceptions;
 import org.openide.util.Lookup;
 
 /**
@@ -67,7 +77,7 @@ import org.openide.util.Lookup;
  * @author Mathieu Bastian
  */
 public class PreviewModelImpl implements PreviewModel {
-    
+
     private final Workspace workspace;
     //Items
     private final Map<String, List<Item>> typeMap;
@@ -77,13 +87,30 @@ public class PreviewModelImpl implements PreviewModel {
     //Dimensions
     private Dimension dimensions;
     private Point topLeftPosition;
-    
+
     public PreviewModelImpl(Workspace workspace) {
         typeMap = new HashMap<String, List<Item>>();
         sourceMap = new HashMap<Object, Object>();
         this.workspace = workspace;
+
+        initBasicPropertyEditors();
     }
-    
+
+    /**
+     * Makes sure that, at least, basic property editors are available for serializing and deserializing
+     */
+    private void initBasicPropertyEditors() {
+        if (PropertyEditorManager.findEditor(DependantColor.class) == null) {
+            PropertyEditorManager.registerEditor(DependantColor.class, BasicDependantColorPropertyEditor.class);
+        }
+        if (PropertyEditorManager.findEditor(DependantOriginalColor.class) == null) {
+            PropertyEditorManager.registerEditor(DependantOriginalColor.class, BasicDependantOriginalColorPropertyEditor.class);
+        }
+        if (PropertyEditorManager.findEditor(EdgeColor.class) == null) {
+            PropertyEditorManager.registerEditor(EdgeColor.class, BasicEdgeColorPropertyEditor.class);
+        }
+    }
+
     private synchronized void initProperties() {
         if (properties == null) {
             properties = new PreviewProperties();
@@ -103,13 +130,13 @@ public class PreviewModelImpl implements PreviewModel {
             properties.putValue(PreviewProperty.VISIBILITY_RATIO, 1f);
         }
     }
-    
+
     @Override
     public PreviewProperties getProperties() {
         initProperties();
         return properties;
     }
-    
+
     @Override
     public Item[] getItems(String type) {
         List<Item> list = typeMap.get(type);
@@ -118,7 +145,7 @@ public class PreviewModelImpl implements PreviewModel {
         }
         return new Item[0];
     }
-    
+
     @Override
     public Item getItem(String type, Object source) {
         Item[] items = getItems(source);
@@ -129,7 +156,7 @@ public class PreviewModelImpl implements PreviewModel {
         }
         return null;
     }
-    
+
     @Override
     public Item[] getItems(Object source) {
         Object value = sourceMap.get(source);
@@ -140,11 +167,11 @@ public class PreviewModelImpl implements PreviewModel {
         }
         return new Item[0];
     }
-    
+
     public String[] getItemTypes() {
         return typeMap.keySet().toArray(new String[0]);
     }
-    
+
     public void loadItems(String type, Item[] items) {
         //Add to type map
         List<Item> typeList = typeMap.get(type);
@@ -190,37 +217,37 @@ public class PreviewModelImpl implements PreviewModel {
             }
         }
     }
-    
+
     private Item mergeItems(Item item, Item toBeMerged) {
         for (String key : toBeMerged.getKeys()) {
             item.setData(key, toBeMerged.getData(key));
         }
         return item;
     }
-    
+
     public void clear() {
         typeMap.clear();
         sourceMap.clear();
     }
-    
+
     public Workspace getWorkspace() {
         return workspace;
     }
-    
+
     @Override
     public Dimension getDimensions() {
         return dimensions;
     }
-    
+
     @Override
     public Point getTopLeftPosition() {
         return topLeftPosition;
     }
-    
+
     public void setDimensions(Dimension dimensions) {
         this.dimensions = dimensions;
     }
-    
+
     public void setTopLeftPosition(Point topLeftPosition) {
         this.topLeftPosition = topLeftPosition;
     }
@@ -228,55 +255,103 @@ public class PreviewModelImpl implements PreviewModel {
     //PERSISTENCE
     public void writeXML(XMLStreamWriter writer) throws XMLStreamException {
         writer.writeStartElement("previewmodel");
-        
+
+        //Write PreviewProperties:
         for (PreviewProperty property : properties.getProperties()) {
             String propertyName = property.getName();
             Object propertyValue = property.getValue();
             if (propertyValue != null) {
-                PropertyEditor editor = PropertyEditorManager.findEditor(propertyValue.getClass());
-                if (editor != null) {
+                String text = getValueAsText(propertyValue);
+                if (text != null) {
                     writer.writeStartElement("previewproperty");
                     writer.writeAttribute("name", propertyName);
-                    editor.setValue(propertyValue);
-                    writer.writeCharacters(editor.getAsText());
+                    writer.writeCharacters(text);
                     writer.writeEndElement();
                 }
             }
         }
-        
+
+        //Write preview simple values:
+        Iterator<Entry<String, Object>> simpleValuesIterator = properties.getSimpleValues().iterator();
+        while (simpleValuesIterator.hasNext()) {
+            Entry<String, Object> simpleValueEntry;
+            simpleValueEntry = simpleValuesIterator.next();
+
+            if (simpleValueEntry.getKey().equals("width")
+                    || simpleValueEntry.getKey().equals("height")) {
+                continue;
+            }
+
+            Object value = simpleValueEntry.getValue();
+            if (value != null) {
+                Class clazz = value.getClass();
+                String text = getValueAsText(value);
+                if (text != null) {
+                    writer.writeStartElement("previewsimplevalue");
+                    writer.writeAttribute("name", simpleValueEntry.getKey());
+                    writer.writeAttribute("class", clazz.getName());
+                    writer.writeCharacters(text);
+                    writer.writeEndElement();
+                }
+            }
+        }
+
         writer.writeEndElement();
     }
-    
+
     public void readXML(XMLStreamReader reader) throws XMLStreamException {
         PreviewProperties props = getProperties();
-        
+
         String propName = null;
-        
+        boolean isSimpleValue = false;
+        String simpleValueClass = null;
+
         boolean end = false;
         while (reader.hasNext() && !end) {
             int type = reader.next();
-            
+
             switch (type) {
                 case XMLStreamReader.START_ELEMENT:
                     String name = reader.getLocalName();
                     if ("previewproperty".equalsIgnoreCase(name)) {
                         propName = reader.getAttributeValue(null, "name");
+                        isSimpleValue = false;
+                    } else if ("previewsimplevalue".equalsIgnoreCase(name)) {
+                        propName = reader.getAttributeValue(null, "name");
+                        simpleValueClass = reader.getAttributeValue(null, "class");
+                        isSimpleValue = true;
                     }
                     break;
                 case XMLStreamReader.CHARACTERS:
                     if (!reader.isWhiteSpace()) {
                         if (propName != null) {
-                            PreviewProperty p = props.getProperty(propName);
-                            if (p != null) {
-                                PropertyEditor editor = PropertyEditorManager.findEditor(p.getType());
-                                if (editor != null) {
+                            if (!isSimpleValue) {//Read PreviewProperty:
+                                PreviewProperty p = props.getProperty(propName);
+                                if (p != null) {
+                                    Object value = readValueFromText(reader.getText(), p.getType());
+                                    PropertyEditor editor = PropertyEditorManager.findEditor(p.getType());
                                     editor.setAsText(reader.getText());
-                                    if (editor.getValue() != null) {
+                                    if (value != null) {
                                         try {
-                                            p.setValue(editor.getValue());
+                                            p.setValue(value);
                                         } catch (Exception e) {
                                             e.printStackTrace();
                                         }
+                                    }
+                                }
+                            } else {//Read preview simple value:
+                                if (simpleValueClass != null) {
+                                    if (!propName.equals("width")
+                                            && !propName.equals("height")) {
+                                        try {
+                                            Object value = readValueFromText(reader.getText(), Class.forName(simpleValueClass));
+                                            if (value != null) {
+                                                props.putValue(propName, value);
+                                            }
+                                        } catch (ClassNotFoundException e) {
+                                            e.printStackTrace();
+                                        }
+
                                     }
                                 }
                             }
@@ -289,6 +364,40 @@ public class PreviewModelImpl implements PreviewModel {
                     }
                     name = null;
                     break;
+            }
+        }
+    }
+
+    private String getValueAsText(Object value) {
+        if (value.getClass().equals(Font.class)) {
+            Font f = (Font) value;
+            return String.format("%s-%d-%d", f.getName(), f.getStyle(), f.getSize()); //bug 551877
+        } else {
+            PropertyEditor editor = PropertyEditorManager.findEditor(value.getClass());
+            if (editor != null) {
+                editor.setValue(value);
+                return editor.getAsText();
+            } else {
+                return null;
+            }
+        }
+    }
+
+    private Object readValueFromText(String valueStr, Class valueClass) {
+        if (valueClass.equals(Font.class)) {
+            try {
+                String parts[] = valueStr.split("-");
+                return new Font(parts[0], Integer.parseInt(parts[1]), Integer.parseInt(parts[2]));//bug 551877
+            } catch (Exception e) {
+                return null;
+            }
+        } else {
+            PropertyEditor editor = PropertyEditorManager.findEditor(valueClass);
+            if (editor != null) {
+                editor.setAsText(valueStr);
+                return editor.getValue();
+            } else {
+                return null;
             }
         }
     }
